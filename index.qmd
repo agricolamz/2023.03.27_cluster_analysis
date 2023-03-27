@@ -1,0 +1,253 @@
+---
+title: "О кластеризации"
+format: html
+df-print: kable
+editor: source
+code-fold: true
+bibliography: bibliography.bib
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+theme_set(theme_bw()+theme(text = element_text(size = 16)))
+library(phangorn)
+```
+
+
+Кластеризация — это не метод, а задача, для решение которой придумано множество алгоритмов. Не существует "правильных" методов кластеризации, так как "clustering is in the eye of the beholder" [@estivill02]. Существует много семейств алгоритмов, для нас важны два:
+
+- иерархическая кластеризация (hierarchical clustering)
+- метод k-средних (k-means)
+
+Иерархическая кластеризация, которую мы сегодня обсуждаем основана на объеденении чисел --- значений расстояния между разными объектами, так что сначала нужно обсудить, что такое матрица расстояния.
+
+## Матрица расстояний
+
+Матрица расстояний — это матрица n × n, которая содержит значения меры расстояния/сходства между объектами в метрическом пространстве. Существует уйма мер расстояния/сходства, выбор из которых зависит от типа данных. К сожалению, не существует универсального алгоритма выбора метода, так что это остается на откуп исследователям. Кроме того, схожие методы, зародившиеся в биологии, называют string metric: они определяют расстояния между графическими репрезентациями объектов (расстояние Хэмминга, расстояние Левинштейна и т. п.).
+
+### Бинарные данные
+
+Представим вот такие данные для нескольких языков:
+
+```{r, echo=FALSE}
+df <- tibble(lang = c("Lithuanian", "Latvian", "Prussian", "Church_Slavonic"),
+             word_1 = c(1, 1, 1, 0),
+             word_2 = c(1, 1, 1, 0),
+             word_3 = c(1, 1, 0, 0),
+             word_4 = c(1, 0, 0, 0),
+             word_5 = c(0, 0, 0, 1))
+df
+```
+
+
+Существует множество мер для анализа бинарных данных. Самый распространенный --- коэффициент Жаккара. Для каждой пары идиомов строим вот такую таблицу:
+
+|         |    | идиом i |   |
+|---------|----|---------|---|
+|         |    | 1       | 0 |
+| идиом j |  1 | a       | b |
+|         | 0  | c       | d |
+
+А дальше мы считаем меру сходства:
+
+$$s(i, j)=\frac{a}{a+b+c}$$
+
+В работе [@gower86] есть и другие методы (14 шт.). Большинство из них есть в функции `dist.binary()` пакета `ade4`.
+
+Дальше можно использовать функцию `dist()` с аргументом `binary`:
+
+```{r}
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") 
+```
+
+Расстояние между литовским и латышским 0.25, так как у них 4 не нулевых слова, а совпадают они в трех, так что мера сходства (similarity) равна 3/4, а мера отличия (dissimilarity) равна 1 - мера сходства = 1/4 = 0.25.
+
+Многие предпочитают визуализировать матрицу расстояния при помощи тепловой карты (heatmap):
+
+```{r}
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  broom::tidy() %>% 
+  add_count(item1) %>% 
+  mutate(item1 = fct_reorder(item1, -n),
+         item2 = fct_reorder(item2, -n)) %>% 
+  ggplot(aes(item1, item2))+
+  geom_tile(aes(fill = distance), colour = "white") +
+  geom_text(aes(label = str_c(round(distance*100), "%")), colour = "white") +
+  scale_fill_gradient(low = "lightblue", high = "navy")+
+  coord_fixed()+
+  labs(x = "", y = "") 
+```
+
+## Иерархическая кластеризация
+
+Иерархические кластеризации бывают двух типов:
+
+- *снизу вверх (agglomerative)*: каждое наблюдение в начальной позиции является кластером, дальше два ближних кластера соединяются в один, а дендограмма отображает порядки таких соединений.
+- *сверху вниз (divisive)*: все наблюдения в начальной позиции являются кластером, который дальше делится на более мелкие, а дендограмма отображает порядки таких разъединений. Алгоритмы иерархической кластеризации требуют на вход матрицы расстояний. Алгоритмов кластерного анализа очень много, так что имеет смысл заглянуть в работу [Gordon 1987] и [на страницу CRAN](https://cran.r-project.org/web/views/Cluster.html).
+
+Кроме того есть очень много разным методов:
+
+- `ward.D`
+- `ward.D2`
+- `single`
+- `complete`
+- `average` (= UPGMA)
+- `mcquitty` (= WPGMA)
+- `median` (= WPGMC)
+- `centroid` (= UPGMC)
+
+На наших фейковых данных разные алгоритмы дают разные результаты:
+
+```{r}
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust() %>% 
+  as.phylo() %>% 
+  plot(main = "complete")
+
+method_for_clustering <- "ward.D"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "ward.D2"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "single"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "average"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "average"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "mcquitty"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "median"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+
+method_for_clustering <- "centroid"
+
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  hclust(method = method_for_clustering) %>% 
+  as.phylo() %>% 
+  plot(main = method_for_clustering)
+```
+
+## Неиерархическая кластеризация: Neighbornet
+
+Алгоритм неиерархической кластеризации [@bryant04] работает той же самой матрице расстояний:
+
+```{r}
+df %>%
+  column_to_rownames(var = "lang") %>% 
+  dist(method = "binary") %>% 
+  neighborNet() %>% 
+  plot()
+```
+
+## На скорую руку применим к нашим данным
+
+Проблемы:
+
+- у нас бывают небинарные значения
+- у нас на каждое селение по 2 и более наблюдений... 
+- у нас бывает NA
+
+```{r, message=FALSE}
+db <- read_csv("https://raw.githubusercontent.com/LingConLab/rutul_dialectology/master/data/database.csv")
+
+db %>% 
+  group_by(feature_title, settlement) %>% 
+  slice_sample(n = 1) %>% 
+  select(feature_title, settlement, value) %>% 
+  na.omit() %>% 
+  mutate(f_new = str_c(feature_title, value),
+         value = 1) %>% 
+  ungroup() %>% 
+  select(settlement, f_new, value) %>% 
+  pivot_wider(names_from = f_new, values_from = value,
+              values_fill = 0) %>% 
+  column_to_rownames(var = "settlement") %>%
+  dist(method = "binary") ->
+  settlement_dist
+
+settlement_dist %>% 
+  broom::tidy() %>% 
+  add_count(item1) %>% 
+  mutate(item1 = fct_reorder(item1, -n),
+         item2 = fct_reorder(item2, -n)) %>% 
+  ggplot(aes(item1, item2))+
+  geom_tile(aes(fill = distance), colour = "white") +
+  geom_text(aes(label = str_c(round(distance*100), "%")), colour = "white") +
+  scale_fill_gradient(low = "lightblue", high = "navy")+
+  coord_fixed()+
+  labs(x = "", y = "") +
+  theme(axis.text.x = element_text(angle = 90))
+
+settlement_dist %>% 
+  hclust() %>% 
+  as.phylo() %>% 
+  plot()
+
+settlement_dist %>% 
+  neighborNet() %>% 
+  plot()
+```
+
+## Еще мысли
+
+- Можно кластеризовать признаки, а не населенные пункты
+- Очень легко нарушить независимость наблюдений
+
